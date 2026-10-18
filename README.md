@@ -19,6 +19,7 @@ decoding. Parallel throughput (4 requests): 116.7 → 281.4 tok/s (2.4×).
 | `scripts/` | Server launch configs (production = `start_sglang_8b_ngram_w8.sh`, plus experiment/negative-result variants) |
 | `tools/` | Utilities (e.g. NGRAM external-corpus prep) |
 | `docs/` | Full experiment journal (`TRITON_KERNELS.md`), morning report (`MORNING_REPORT.md`), original plan |
+| `RESULTS.md` | Plain-language scoreboard of every experiment + which config to run |
 
 ## Headline results
 
@@ -54,6 +55,12 @@ decoding. Parallel throughput (4 requests): 116.7 → 281.4 tok/s (2.4×).
   (Its prefill is 4056 tok/s, 1.75× faster than 8B, thanks to 24/32
   linear-attention layers; prefill CUDA graph capture hangs on this
   arch — keep it disabled.)
+- Qwen3.5-9B-GPTQ-INT4 (§23): the stack is quant-agnostic — NGRAM +
+  graph + triton attn all transfer. 7.24GB weights free enough VRAM
+  for 8 concurrent requests (mamba slots 9→41, KV 106k): **192.4
+  tok/s aggregate**, 3.5× the FP8 single-user ceiling, at −14%
+  single-stream (49.2) because marlin/GPTQ can't use the §13 fusion.
+  Multi-user pick for 9B.
 
 ## Production recipe
 

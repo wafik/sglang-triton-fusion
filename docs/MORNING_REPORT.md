@@ -57,6 +57,15 @@ Summary of all experiments from this session. Full technical details:
     Result: **57.3 tok/s decode, 4056 tok/s prefill** (1.75× faster
     prefill than 8B!), but mamba cache caps at **1 concurrent
     request** — single-user only. 8B remains the multi-user pick.
+15. **★★ Qwen3.5-9B-GPTQ-INT4 (§23)** — same hybrid arch, 4-bit
+    GPTQ (7.24GB weights). The quant-agnostic stack (NGRAM + graph +
+    triton attn) transfers fully; §13 patch correctly inert. Freed
+    VRAM → mamba slots 9→**41**, KV 36.6k→**106.6k**, and
+    `max_running_requests` 1→**8**. Real 8-way batching: **192.4
+    tok/s aggregate** (3.5× FP8's single-user ceiling) at 49.2
+    single / 2524 prefill (−14%/−38% vs FP8 marlin-vs-cutlass +
+    no §13). Accept len drops to 1.00–1.20 (quant noise rejects
+    drafts). **Verdict: multi-user pick for 9B on 16GB.**
 
 ## Kernel proof — 4B & 8B (summary)
 
@@ -109,6 +118,7 @@ already fuses it elsewhere (§17).
 | External Wikipedia-ID corpus (§20) | 54.6 tok/s · accept 1.5 · parallel 199 | **NEGATIVE** (reverted) |
 | Draft>8 w16 (§21) | 71.3 tok/s · accept 1.9–3.1 · parallel 220.6 | **NEGATIVE** (reverted) |
 | Qwen3.5-9B-FP8 hybrid (§22) | decode 57.3 · prefill 4056 · max_running=1 | **FITS** (single-user only) |
+| **Qwen3.5-9B-GPTQ-INT4 (§23)** | decode 49.2 · 8-way agg **192.4** · max_running=8 · KV 106k | **multi-user pick** |
 
 ## Server numbers
 
@@ -119,6 +129,7 @@ already fuses it elsewhere (§17).
 | decode bs=1 | 27.7 tok/s | **81.7 tok/s warm** (w8 ngram+graph+§13; vanilla 26.8) |
 | 4-way parallel aggregate | 116.7 | **281.4** (warm) |
 | Qwen3.5-9B-FP8 (§22) | — | decode **57.3** · prefill **4056** · KV 36.6k · **max_running=1** |
+| Qwen3.5-9B-INT4 (§23) | — | decode 49.2 · prefill 2524 · KV **106.6k** · **max_running=8** · 8-way **192.4** |
 
 ## Lessons learned (most valuable)
 

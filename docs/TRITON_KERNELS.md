@@ -986,3 +986,93 @@ Verdict: **FITS and serves (57.3 tok/s decode, 4056 prefill), but
 single-user only** — for multi-user serving 8B remains the better
 card-fit. §13 fused quant+GEMV stays installed (fp8_utils.py shared
 by all start scripts).
+
+## §23 — Qwen3.5-9B-GPTQ-INT4: does the stack transfer to 4-bit?
+
+**Goal (user request):** try INT4 for Qwen3.5-9B on 16GB and verify
+whether the optimization stack built for FP8 (NGRAM + CUDA graph +
+triton attn + §13 patch) still helps — INT4 is smaller, so where does
+the freed VRAM go?
+
+Checkpoint: `mssfj/Qwen3.5-9B-GPTQ-INT4` (gptq_v2, bits=4, group 128,
+7.69GB disk / 7.24GB VRAM, same `Qwen3_5ForCausalLM` hybrid arch as
+§22: 24 linear + 8 full attention layers).
+
+### Launch config (`scripts/start_sglang_35_9b_int4.sh`)
+
+Same flags as §22 plus the quant-agnostic stack:
+
+```bash
+--attention-backend triton
+--disable-custom-all-reduce
+--mem-fraction-static 0.90
+--mamba-ssm-dtype bfloat16      # required, same as §22
+--disable-prefill-cuda-graph    # required, same as §22
+--speculative-algorithm NGRAM --speculative-num-steps 7 \
+--speculative-num-draft-tokens 8
+```
+
+**§13 fused quant+GEMV patch does NOT fire** (predicted): the gate
+requires FP8 block-128 quant format; GPTQ runs through marlin kernels.
+No monkeypatch changes needed — the patch stays inert.
+
+### Startup (healthy path, ~130s to READY)
+
+- Load weight: 9.35s → avail 14.77 → **7.53 GB** (7.24GB weights)
+- **Mamba cache grows 9 → 41 slots** (max_running 1 → 8, still 5
+  slots/request): conv 0.05GB + ssm 0.98GB + intermediates 1.77GB
+- Memory pool end: avail 1.30 GB → verify-graph capture bs=[1..8]
+  (139s, first capture after cache wipe) → **max_total_num_tokens
+  = 106,577**, avail 1.02 GB, `max_running_requests=8`
+- VRAM steady: 15016 MiB / 16364 MiB
+
+### Results vs §22 (FP8) and §19 (8B production)
+
+| Metric | 9B-INT4 (§23) | 9B-FP8 (§22) | 8B-FP8 (§19) |
+|---|---|---|---|
+| decode bs=1 | 49.2 tok/s | **57.3** | **81.7** |
+| prefill | 2524 tok/s | **4056** | 2314 |
+| parallel-4 aggregate | **145.6** | 68.0 (serialized) | 281.4 |
+| parallel-8 aggregate | **192.4** | impossible | — |
+| max_running_requests | **8** | 1 | 4+ |
+| KV tokens | **106,577** | 36,653 | 18,800 |
+| NGRAM accept len | 1.00–1.20 | 1.15–2.75 | 1.24–2.72 |
+| weights | **7.24 GB** | 11.40 GB | ~8.5 GB |
+| TTFT (1-token prompt) | 65 ms | 62 ms | ~33 ms |
+
+### Analysis
+
+1. **The stack transfers.** NGRAM, decode CUDA graph (bs 1–8,
+   `cuda graph: True` in decode logs) and triton attention all run on
+   GPTQ unchanged — they are quant-agnostic. This is what turns "4GB
+   freed" into *usable* capacity: mamba slots 9 → 41 and KV 36.6k →
+   106.6k, i.e. `max_running_requests` **1 → 8**.
+2. **Single-stream costs 14% vs FP8** (49.2 vs 57.3): marlin GEMV is
+   less optimized on sm_120 than the FP8 cutlass path, and §13's
+   fused quant+GEMV cannot fire on GPTQ (no block-128 FP8 format).
+   Prefill costs 38% (2524 vs 4056) — same cause, GEMM side.
+3. **Multi-user flips the verdict.** FP8 §22 can only ever run one
+   request (`max_running=1`), so its "parallel" number is fake
+   serialization. INT4 runs real 8-way batches: **192.4 tok/s
+   aggregate = 3.5× FP8's single-user ceiling** at 14% slower
+   single-stream. For serving more than one person, INT4 wins.
+4. **Accept len drops to 1.00–1.20** (vs 1.15–2.75 on FP8): 4-bit
+   quantization noise flips borderline tokens, so the NGRAM verifier
+   rejects more drafts. Spec-dec still helps (parallel batches show
+   `accept len` up to 1.2), but its leverage is weaker on INT4.
+   Greedy/low-temp workloads should recover some of this.
+5. **Prefill CUDA graph still hangs** on hybrid GDN (same as §22) —
+   the `--disable-prefill-cuda-graph` flag is mandatory for this
+   arch regardless of quantization.
+
+### Verdict
+
+**The architecture is proven quant-agnostic.** INT4 is the
+multi-user configuration for 9B on 16GB: 8 concurrent requests,
+192.4 tok/s aggregate, 106k-token KV, for 14% single-stream and 38%
+prefill vs FP8. Single-user speed remains 8B-FP8 (81.7). Remaining
+INT4 upside (not yet tried): AWQ kernel variant (may beat marlin on
+Blackwell), EAGLE draft model (accept 2–3× vs ngram ~1.1 — arch
+support for hybrid GDN untested), greedy-decode accept recovery.
+
+Server: `scripts/start_sglang_35_9b_int4.sh` on :30000.
