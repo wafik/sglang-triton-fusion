@@ -1,14 +1,14 @@
-Berikut adalah **rencana kerja detail (Action Plan)** untuk memulai eksperimen optimasi kernel menggunakan **WSL2 (Ubuntu di Windows)** dengan model yang paling ringan terlebih dahulu (`Qwen3-4B-FP8`), sehingga ruang SSD aman dan Anda tidak perlu langsung repot melakukan *dual-boot*.
+Here is the **detailed work plan (Action Plan)** for starting kernel optimization experiments using **WSL2 (Ubuntu on Windows)** with the lightest model first (`Qwen3-4B-FP8`), so SSD space stays safe and you don't have to bother with *dual-boot* right away.
 
 ---
 
-## 🛠️ Tahap Persiapan Lingkungan di WSL2 (Ubuntu)
+## 🛠️ Environment Preparation Stage in WSL2 (Ubuntu)
 
-Buka terminal **WSL2 (Ubuntu)** Anda, lalu jalankan langkah-langkah berikut secara berurutan:
+Open your **WSL2 (Ubuntu)** terminal, then run the following steps in order:
 
-### 1. Update Sistem & Pastikan Driver NVIDIA Terdeteksi
+### 1. Update the System & Make Sure the NVIDIA Driver Is Detected
 
-WSL2 secara otomatis melakukan *passthrough* driver NVIDIA dari Windows utama. Verifikasi bahwa GPU Anda terbaca dengan benar:
+WSL2 automatically *passes through* the NVIDIA driver from the main Windows installation. Verify that your GPU is read correctly:
 
 ```bash
 sudo apt update && sudo apt upgrade -y
@@ -16,11 +16,11 @@ nvidia-smi
 
 ```
 
-*Pastikan `RTX 5060 Ti` muncul di tabel bawah beserta versi CUDA-nya (minimal CUDA 12.8).*
+*Make sure `RTX 5060 Ti` appears in the table below along with its CUDA version (minimum CUDA 12.8).*
 
-### 2. Buat Virtual Environment Khusus Eksperimen
+### 2. Create a Dedicated Virtual Environment for Experiments
 
-Gunakan Python 3.10/3.11 bersih agar instalasi PyTorch dan SGLang tidak berbenturan dengan sistem lain:
+Use a clean Python 3.10/3.11 so the PyTorch and SGLang installations don't conflict with anything else on the system:
 
 ```bash
 sudo apt install -y python3-pip python3-venv git curl
@@ -30,9 +30,9 @@ pip install --upgrade pip
 
 ```
 
-### 3. Instal PyTorch (Versi CUDA Terbaru) & SGLang
+### 3. Install PyTorch (Latest CUDA Version) & SGLang
 
-Instal PyTorch yang mendukung arsitektur Blackwell (`sm_120`), lalu instal kerangka SGLang:
+Install PyTorch with support for the Blackwell architecture (`sm_120`), then install the SGLang framework:
 
 ```bash
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
@@ -42,18 +42,18 @@ pip install "sglang[all]" triton
 
 ---
 
-## 🚀 Tahap 1: Microbenchmark Sintetis (0 GB Model)
+## 🚀 Stage 1: Synthetic Microbenchmark (0 GB Model)
 
-Sebelum mengunduh model fisik, kita uji dulu kecepatan *baseline* vs *custom kernel* menggunakan tensor acak di VRAM (misalnya mensimulasikan operasi *Two-Stage Argmax* atau *Fused SiLU*).
+Before downloading a physical model, we first test the *baseline* vs *custom kernel* speed using random tensors in VRAM (for example, simulating *Two-Stage Argmax* or *Fused SiLU* operations).
 
-Buat file baru bernama `test_microbenchmark.py`:
+Create a new file named `test_microbenchmark.py`:
 
 ```bash
 nano test_microbenchmark.py
 
 ```
 
-Isi dengan skrip pengujian sederhana berikut (salin dan tempel):
+Fill it with the following simple test script (copy and paste):
 
 ```python
 import torch
@@ -79,7 +79,7 @@ print("Status Tahap 1 (Synthetic Test): BERHASIL ✅")
 
 ```
 
-Simpan file (`Ctrl+O`, `Enter`, lalu `Ctrl+X`), kemudian jalankan:
+Save the file (`Ctrl+O`, `Enter`, then `Ctrl+X`), then run it:
 
 ```bash
 python3 test_microbenchmark.py
@@ -88,9 +88,9 @@ python3 test_microbenchmark.py
 
 ---
 
-## 📥 Tahap 2: Menyiapkan Model Ringan (`Qwen/Qwen3-4B-FP8`)
+## 📥 Stage 2: Preparing the Light Model (`Qwen/Qwen3-4B-FP8`)
 
-Setelah kerangka kerja teruji, unduh model pertama yang ukurannya ramah SSD (~4.2 GB):
+Once the framework is tested, download the first model whose size is SSD-friendly (~4.2 GB):
 
 ```bash
 pip install huggingface_hub
@@ -100,9 +100,9 @@ huggingface-cli download Qwen/Qwen3-4B-FP8
 
 ---
 
-## 🏃 Tahap 3: Menjalankan Server SGLang dengan Model 4B
+## 🏃 Stage 3: Running the SGLang Server with the 4B Model
 
-Jalankan server SGLang di WSL2 untuk memverifikasi apakah server merespons dengan benar:
+Run the SGLang server in WSL2 to verify that the server responds correctly:
 
 ```bash
 python3 -m sglang.launch_server \
@@ -113,7 +113,7 @@ python3 -m sglang.launch_server \
 
 ```
 
-Buka tab terminal WSL2 baru (biarkan server tetap berjalan di tab pertama), lalu tes kirim *request* teks:
+Open a new WSL2 terminal tab (leave the server running in the first tab), then test sending a text *request*:
 
 ```bash
 curl http://localhost:30000/v1/completions \
@@ -127,6 +127,6 @@ curl http://localhost:30000/v1/completions \
 
 ---
 
-### Langkah Selanjutnya
+### Next Steps
 
-Silakan salin atau jalankan langkah **Tahap 1** di atas terlebih dahulu di WSL2 Anda. Beritahu saya jika sudah berjalan mulus atau ada kendala *error* dependensi, lalu kita bisa langsung merancang *custom kernel* Triton pertamanya untuk memangkas waktu eksekusi argmax/fused-op tersebut!
+Please copy or run the **Stage 1** steps above first in your WSL2. Let me know if everything runs smoothly or if you hit any dependency *error* issues, and then we can immediately design the first Triton *custom kernel* to cut down that argmax/fused-op execution time!

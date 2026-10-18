@@ -82,9 +82,7 @@ nearly free under bandwidth-bound decode.
   journal, section by section (§1–§21), including all failed attempts.
 - [`docs/MORNING_REPORT.md`](docs/MORNING_REPORT.md) — summary report
   with scoreboard and recommendations.
-
-> Note: the detailed journal is written in Indonesian (the author's
-> working language). Numbers, config flags, and code are language-neutral.
+- [`docs/PLAN.md`](docs/PLAN.md) — original environment/setup plan.
 
 ## License
 
