@@ -49,6 +49,11 @@ decoding. Parallel throughput (4 requests): 116.7 → 281.4 tok/s (2.4×).
 - NGRAM draft window 16 (vs 8): accept length up, throughput **down** (71.3 vs 81.7 tok/s).
 - External NGRAM corpus (Wikipedia ID): budget cap ≤ draft−1 hurts more than it helps.
 - quant+GEMV at batch 16 without TM-blocking: 0.06–0.5× (GEMV-fusion ≠ GEMM-fusion).
+- Qwen3.5-9B-FP8 hybrid (§22): fits 16GB at 57.3 tok/s decode, but the
+  mamba state cache caps concurrency at 1 request — single-user only.
+  (Its prefill is 4056 tok/s, 1.75× faster than 8B, thanks to 24/32
+  linear-attention layers; prefill CUDA graph capture hangs on this
+  arch — keep it disabled.)
 
 ## Production recipe
 
@@ -79,7 +84,7 @@ nearly free under bandwidth-bound decode.
 ## Docs
 
 - [`docs/TRITON_KERNELS.md`](docs/TRITON_KERNELS.md) — full experiment
-  journal, section by section (§1–§21), including all failed attempts.
+  journal, section by section (§1–§22), including all failed attempts.
 - [`docs/MORNING_REPORT.md`](docs/MORNING_REPORT.md) — summary report
   with scoreboard and recommendations.
 - [`docs/PLAN.md`](docs/PLAN.md) — original environment/setup plan.

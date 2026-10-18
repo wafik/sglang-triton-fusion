@@ -915,3 +915,74 @@ increase does not cover the cost:
 
 Server back to `start_sglang_8b_ngram_w8.sh`. The w16 script is left as
 a note.
+
+## §22 — Qwen3.5-9B-FP8: hybrid linear-attention (16GB fit test)
+
+**Goal (user request):** try Qwen3.5-9B, any quantization, as long as it
+fits the 16GB card. Chosen checkpoint: `lovedheart/Qwen3.5-9B-FP8`
+(block [128,128] quant → §13 fused quant+GEMV patch gate applies),
+12.19GB weights, native `Qwen3_5ForConditionalGeneration` support in
+sglang 0.5.22.
+
+### Discovery: Qwen3.5-9B is a hybrid linear-attention model
+
+`text_config.layer_types` = 24 × `linear_attention` + 8 ×
+`full_attention` (interval 4), `mamba_ssm_dtype: float32`. sglang
+treats it as a mambaish hybrid: it needs a **mamba state cache** in
+addition to the KV cache. Two startup failures, both fixed:
+
+| Failure | Symptom | Fix |
+|---|---|---|
+| mamba state 0 slots | `RuntimeError: Hybrid state cache too small … max_mamba_cache_size=2, mamba_ratio=5 → max_num_reqs=0` (dies after weight load) | `--mamba-ssm-dtype bfloat16` (config says fp32; bf16 halves state size) + `--mem-fraction-static 0.90` → 9 slots allocated |
+| prefill graph capture hang | stuck 25+ min at `Capturing prefill shape num_tokens=2048, 0/42` with scheduler at 90% CPU but Triton cache NOT growing (spin, not compile); `nvidia-smi` wedges | `--disable-prefill-cuda-graph` |
+
+After both: startup ~62s (load 29s + verify-graph 7.14s), KV 36,653
+tokens, mamba cache 0.64GB, avail mem 1.40GB. **Known cap:**
+`max_running_requests=1` (9 mamba slots ÷ 5 slots/request) — 16GB
+cannot hold 9B weights + mamba state for >1 concurrent request.
+Target-verify graph (M=8) captured fine; decode steps run under
+`cuda graph: True` via the verify path.
+
+### Results (production stack: triton attn + §13 patch + NGRAM s7/d8, no prefill graph)
+
+| Metric | Qwen3.5-9B-FP8 | Qwen3-8B-FP8 (§19 reference) |
+|---|---|---|
+| decode bs=1 warm | **57.3 tok/s** (round 1: 47.7) | 81.7 tok/s |
+| prefill throughput | **4056 tok/s** | 2314 tok/s |
+| TTFT (1-token prompt) | 62 ms | ~33 ms (graph cfg) |
+| parallel-4 aggregate | 68.0 median (but capped at 1 running req — serialized) | 281.4 |
+| NGRAM accept len | 1.15–2.75 | 1.24–2.72 |
+| weights / VRAM used | 11.40GB + pools, 1.40GB left | ~13.4GB |
+| KV capacity | 36,653 tokens | 18,800 tokens |
+
+### Analysis
+
+1. **Decode = 70% of 8B at 134% of the weight bytes** (11.4 vs 8.5GB)
+   — directionally consistent with the §17 bandwidth roofline: step
+   time scales with bytes streamed, but per-step kernel overhead
+   (GDN linear-attention state updates, mamba slot copies) does not
+   shrink with size, so 9B sits below a pure bandwidth ratio (would
+   predict ~75%).
+2. **Prefill is 1.75× FASTER than 8B** (4056 vs 2314 tok/s): 24/32
+   layers are linear attention — no quadratic full-attention cost on
+   long prompts. The hybrid design trades decode overhead for cheap
+   prefill.
+3. **Single-concurrency is the real cost of this card.** 9B-FP8 +
+   float32 mamba cannot even start (0 slots); with bf16 it serves but
+   caps at `max_running_requests=1`. The parallel-4 number (68.0) is
+   just serialized single-stream with queueing — not real batching.
+   Raising `--max-mamba-cache-size` needs ~0.14GB per extra slot;
+   only 1.40GB headroom remains → max ~2 requests, not worth
+   destabilizing.
+4. **Prefill CUDA graph is unsafe on this arch** — capture hangs (not
+   slow: Triton cache static = spin inside capture). Decode/verify
+   graph is fine. Leave `--disable-prefill-cuda-graph` for hybrid
+   GDN models.
+
+### Final state
+
+Server: `scripts/start_sglang_35_9b_fp8.sh` on :30000.
+Verdict: **FITS and serves (57.3 tok/s decode, 4056 prefill), but
+single-user only** — for multi-user serving 8B remains the better
+card-fit. §13 fused quant+GEMV stays installed (fp8_utils.py shared
+by all start scripts).

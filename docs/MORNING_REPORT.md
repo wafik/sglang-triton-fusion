@@ -50,6 +50,13 @@ Summary of all experiments from this session. Full technical details:
     vs 281.4 parallel). Verify graph at 16 was fine (+0.11GB). Sweet-spot
     draft remains 8. Reverted.
 13. Fused sampling revalidated on real 8B logits: TV 0.0012 PASS.
+14. **Qwen3.5-9B-FP8 fits 16GB (§22)** — hybrid linear-attention
+    (24 GDN + 8 full layers). Needed `--mamba-ssm-dtype bfloat16`
+    (float32 default → 0 state slots → crash) and
+    `--disable-prefill-cuda-graph` (capture hangs on hybrid GDN).
+    Result: **57.3 tok/s decode, 4056 tok/s prefill** (1.75× faster
+    prefill than 8B!), but mamba cache caps at **1 concurrent
+    request** — single-user only. 8B remains the multi-user pick.
 
 ## Kernel proof — 4B & 8B (summary)
 
@@ -101,6 +108,7 @@ already fuses it elsewhere (§17).
 | **NGRAM wide window s7/d8 (§19)** | **63.7–81.7 tok/s single** | **big win** |
 | External Wikipedia-ID corpus (§20) | 54.6 tok/s · accept 1.5 · parallel 199 | **NEGATIVE** (reverted) |
 | Draft>8 w16 (§21) | 71.3 tok/s · accept 1.9–3.1 · parallel 220.6 | **NEGATIVE** (reverted) |
+| Qwen3.5-9B-FP8 hybrid (§22) | decode 57.3 · prefill 4056 · max_running=1 | **FITS** (single-user only) |
 
 ## Server numbers
 
@@ -110,6 +118,7 @@ already fuses it elsewhere (§17).
 | KV tokens | ~30k | 18.8k |
 | decode bs=1 | 27.7 tok/s | **81.7 tok/s warm** (w8 ngram+graph+§13; vanilla 26.8) |
 | 4-way parallel aggregate | 116.7 | **281.4** (warm) |
+| Qwen3.5-9B-FP8 (§22) | — | decode **57.3** · prefill **4056** · KV 36.6k · **max_running=1** |
 
 ## Lessons learned (most valuable)
 
@@ -145,6 +154,9 @@ already fuses it elsewhere (§17).
       (vs w8 81.7). Draft sweet-spot = 8.
    c. ~~Polish documentation~~ ✅ **DONE**: 4B/8B kernel-proof tables in
       MORNING_REPORT; §1–§21 complete in TRITON_KERNELS.md.
+   d. ~~Qwen3.5-9B fit test~~ ✅ **DONE (§22)**: fits at 57.3 tok/s
+      decode / 4056 prefill but max_running=1. Not a multi-user
+      replacement for 8B.
 
 ## System state
 
@@ -154,6 +166,10 @@ already fuses it elsewhere (§17).
   Fallbacks: `start_sglang_8b_ngram.sh` (s4/d5), `start_sglang_8b_graph.sh`
   (no spec, minimal TTFT 33ms). Full revert: `fp8_utils.py.orig13`
   + `start_sglang_8b.sh`.
+- **Qwen3.5-9B-FP8** now also serves on :30000
+  (`scripts/start_sglang_35_9b_fp8.sh`): mamba bf16, mem-fraction 0.90,
+  prefill graph OFF (hang). Single-request only. 8B start script
+  restores multi-user serving.
 - Environment fix: symlink `libcuda.so` → CUDA stubs (flashinfer JIT
   sampling needs `-lcuda` on the first top_p request).
 - 4B is available in the HF cache; just revert scripts if needed.
