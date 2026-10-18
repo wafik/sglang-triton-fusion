@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.log
+*.orig*
+*.pid
+*.out
+.venv/
+venv*/
+.DS_Store
+# local model weights / corpora never belong in git
+*.jsonl
+models/
